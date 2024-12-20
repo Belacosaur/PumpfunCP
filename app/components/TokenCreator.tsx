@@ -47,56 +47,39 @@ export default function TokenCreator() {
       console.log('Sending payment transaction...');
       const signedPaymentTx = await signTransaction(paymentTransaction);
       paymentSignature = await connection.sendRawTransaction(signedPaymentTx.serialize(), {
-        skipPreflight: true,
-        maxRetries: 5,
-        preflightCommitment: 'processed'
+        skipPreflight: false,
+        maxRetries: 1,
+        preflightCommitment: 'confirmed'
       });
       
       console.log(`Payment transaction sent: ${paymentSignature}`);
 
-      // Wait for payment confirmation - more aggressive polling
-      let confirmationAttempts = 0;
-      const maxAttempts = 30;
-      
-      while (confirmationAttempts < maxAttempts) {
-        try {
-          const status = await connection.getSignatureStatus(paymentSignature);
-          
-          // Accept processed status as good enough
-          if (status.value?.confirmationStatus === 'processed' || 
-              status.value?.confirmationStatus === 'confirmed' || 
-              status.value?.confirmationStatus === 'finalized') {
-            console.log(`Payment processed with status: ${status.value.confirmationStatus}`);
-            break;
-          }
-          
-          if (status.value?.err) {
-            throw new Error(`Payment failed: ${JSON.stringify(status.value.err)}`);
-          }
+      // Wait for IMMEDIATE payment confirmation - fail fast if not confirmed quickly
+      const startTime = Date.now();
+      let confirmed = false;
 
-          // Poll more frequently
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          confirmationAttempts++;
-          
-          if (confirmationAttempts === maxAttempts) {
-            // If we timeout, but the transaction exists, continue anyway
-            const finalCheck = await connection.getSignatureStatus(paymentSignature);
-            if (finalCheck.value && !finalCheck.value.err) {
-              console.log('Payment exists on chain, proceeding...');
-              break;
-            }
-            throw new Error('Payment confirmation timeout - please check Solscan for status');
-          }
-        } catch (error) {
-          if (confirmationAttempts === maxAttempts) {
-            throw error;
-          }
-          // If we get an error checking status, wait a bit and retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          confirmationAttempts++;
+      while (Date.now() - startTime < 5000) {
+        const status = await connection.getSignatureStatus(paymentSignature);
+        
+        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+          confirmed = true;
+          console.log(`Payment confirmed with status: ${status.value.confirmationStatus}`);
+          break;
         }
+
+        if (status.value?.err) {
+          throw new Error(`Payment failed: ${JSON.stringify(status.value.err)}`);
+        }
+
+        // Quick poll interval
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
 
+      if (!confirmed) {
+        throw new Error('Payment failed to confirm quickly - please try again');
+      }
+
+      // Proceed with token creation
       console.log('Payment processed, creating token...');
 
       // Step 2: Send token creation transaction
@@ -111,7 +94,8 @@ export default function TokenCreator() {
       console.log(`Token creation transaction sent: ${createSignature}`);
 
       // Monitor token creation status
-      confirmationAttempts = 0;
+      let confirmationAttempts = 0;
+      const maxAttempts = 30;
       
       while (confirmationAttempts < maxAttempts) {
         const status = await connection.getSignatureStatus(createSignature);
