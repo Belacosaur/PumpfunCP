@@ -1,10 +1,7 @@
 [build]
 builder = "nixpacks"
-installCommand = "npm ci --omit=dev"
-buildCommand = "npm run build"
 
 [deploy]
-startCommand = "npm run start"
 healthcheckPath = "/"
 healthcheckTimeout = 100
 
