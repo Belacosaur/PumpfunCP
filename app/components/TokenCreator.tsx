@@ -10,11 +10,10 @@ import {
   TransactionMessage, 
   VersionedTransaction, 
   ComputeBudgetProgram,
-  SystemProgram,
   PublicKey,
   LAMPORTS_PER_SOL
 } from '@solana/web3.js';
-import { MANAGER_WALLET, MANAGER_PRIVATE_KEY, CREATION_FEE, TOKEN_PURCHASE_AMOUNT } from '../lib/config';
+import { CREATION_FEE, TOKEN_PURCHASE_AMOUNT, BACKEND_URL } from '../lib/config';
 import TokenPurchase from './TokenPurchase';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -33,148 +32,147 @@ export default function TokenCreator() {
     }
 
     setIsLoading(true);
-    let signature: string | undefined;
+    let paymentSignature: string | undefined;
+    let createSignature: string | undefined;
     let mintAddress: string | undefined;
-    let purchaseSignature: string | undefined;
     
     try {
-      // Get token creation data first
-      const { transaction, mintKeypair, mintAddress: newMintAddress } = 
+      // Get transaction data
+      const { paymentTransaction, createTransaction, mintKeypair, mintAddress: newMintAddress } = 
         await createPumpToken(connection, config, publicKey);
       
       mintAddress = newMintAddress;
-      setCreatedMintAddress(newMintAddress);
 
-      // Get fresh blockhash right before sending
-      const { blockhash, lastValidBlockHeight } = 
-        await connection.getLatestBlockhash('finalized');
+      // Step 1: Send payment transaction
+      console.log('Sending payment transaction...');
+      const signedPaymentTx = await signTransaction(paymentTransaction);
+      paymentSignature = await connection.sendRawTransaction(signedPaymentTx.serialize(), {
+        skipPreflight: true,
+        maxRetries: 5,
+        preflightCommitment: 'processed'
+      });
       
-      // Update transaction blockhash
-      transaction.message.recentBlockhash = blockhash;
+      console.log(`Payment transaction sent: ${paymentSignature}`);
 
-      // Decompile message to modify instructions
-      const message = TransactionMessage.decompile(transaction.message);
-
-      // Remove any existing compute budget instructions
-      message.instructions = message.instructions.filter(
-        inst => !inst.programId.equals(ComputeBudgetProgram.programId)
-      );
-
-      // Add compute budget instructions with higher values
-      message.instructions.unshift(
-        ComputeBudgetProgram.setComputeUnitLimit({ 
-          units: 1_400_000
-        }),
-        ComputeBudgetProgram.setComputeUnitPrice({ 
-          microLamports: 500_000  // Increased priority fee significantly
-        })
-      );
-
-      // Recompile message
-      transaction.message = message.compileToV0Message();
-
-      // Sign and send immediately
-      transaction.sign([mintKeypair]);
-      const signedTx = await signTransaction(transaction);
+      // Wait for payment confirmation - more aggressive polling
+      let confirmationAttempts = 0;
+      const maxAttempts = 30;
       
-      // Send with retries and preflight disabled
-      signature = await connection.sendRawTransaction(signedTx.serialize(), {
+      while (confirmationAttempts < maxAttempts) {
+        try {
+          const status = await connection.getSignatureStatus(paymentSignature);
+          
+          // Accept processed status as good enough
+          if (status.value?.confirmationStatus === 'processed' || 
+              status.value?.confirmationStatus === 'confirmed' || 
+              status.value?.confirmationStatus === 'finalized') {
+            console.log(`Payment processed with status: ${status.value.confirmationStatus}`);
+            break;
+          }
+          
+          if (status.value?.err) {
+            throw new Error(`Payment failed: ${JSON.stringify(status.value.err)}`);
+          }
+
+          // Poll more frequently
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          confirmationAttempts++;
+          
+          if (confirmationAttempts === maxAttempts) {
+            // If we timeout, but the transaction exists, continue anyway
+            const finalCheck = await connection.getSignatureStatus(paymentSignature);
+            if (finalCheck.value && !finalCheck.value.err) {
+              console.log('Payment exists on chain, proceeding...');
+              break;
+            }
+            throw new Error('Payment confirmation timeout - please check Solscan for status');
+          }
+        } catch (error) {
+          if (confirmationAttempts === maxAttempts) {
+            throw error;
+          }
+          // If we get an error checking status, wait a bit and retry
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          confirmationAttempts++;
+        }
+      }
+
+      console.log('Payment processed, creating token...');
+
+      // Step 2: Send token creation transaction
+      createTransaction.sign([mintKeypair]);
+      const signedCreateTx = await signTransaction(createTransaction);
+      createSignature = await connection.sendRawTransaction(signedCreateTx.serialize(), {
         skipPreflight: true,
         maxRetries: 5,
         preflightCommitment: 'confirmed'
       });
       
-      console.log(`Token creation transaction sent: ${signature}`);
+      console.log(`Token creation transaction sent: ${createSignature}`);
 
-      // Wait for confirmation with shorter timeout
-      await Promise.race([
-        connection.confirmTransaction({
-          signature,
-          blockhash,
-          lastValidBlockHeight
-        }, 'confirmed'),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Creation confirmation timeout')), 30000)
-        )
-      ]);
+      // Monitor token creation status
+      confirmationAttempts = 0;
+      
+      while (confirmationAttempts < maxAttempts) {
+        const status = await connection.getSignatureStatus(createSignature);
+        
+        if (status.value?.confirmationStatus === 'confirmed' || status.value?.confirmationStatus === 'finalized') {
+          console.log(`Token creation confirmed with status: ${status.value.confirmationStatus}`);
+          break;
+        }
+        
+        if (status.value?.err) {
+          throw new Error(`Token creation failed: ${JSON.stringify(status.value.err)}`);
+        }
 
-      // Reduced wait time before purchase
-      await sleep(1000);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        confirmationAttempts++;
+        
+        if (confirmationAttempts === maxAttempts) {
+          throw new Error('Token creation timeout - please check Solscan for status');
+        }
+      }
 
-      // Create token purchase transaction with updated settings
-      const purchaseResponse = await fetch(`https://pumpportal.fun/api/trade-local`, {
-        method: "POST",
+      // Notify backend to purchase tokens
+      console.log('Token created, notifying backend to purchase...');
+      const purchaseResponse = await fetch(`${BACKEND_URL}/api/purchase`, {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json"
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          publicKey: MANAGER_WALLET.toString(),
-          recipientAddress: publicKey.toString(),
+          publicKey: publicKey.toString(),
           action: "buy",
           mint: mintAddress,
-          denominatedInSol: "true",
+          denominatedInSol: true,
           amount: TOKEN_PURCHASE_AMOUNT,
           slippage: 10,
-          priorityFee: 0.005,
-          computeUnits: 1_400_000,
-          computeUnitPrice: 100_000,
-          pool: "pump"
+          priorityFee: 0.001,
+          pool: "pump",
+          paymentTx: paymentSignature,
+          createTx: createSignature,
+          managerAddress: await (await fetch("/api/manager-address")).json().then(res => res.managerAddress)
         })
       });
 
+      const purchaseResponseData = await purchaseResponse.json();
+      console.log('Backend purchase response:', purchaseResponseData);
+
       if (!purchaseResponse.ok) {
-        const errorText = await purchaseResponse.text();
-        console.error('Purchase response error:', errorText);
-        throw new Error(`Token purchase failed: ${purchaseResponse.statusText}`);
+        const errorText = JSON.stringify(purchaseResponseData);
+        console.error('Backend response:', errorText);
+        throw new Error(`Failed to initiate token purchase on backend: ${errorText}`);
       }
-
-      const purchaseData = await purchaseResponse.arrayBuffer();
-      const purchaseTx = VersionedTransaction.deserialize(new Uint8Array(purchaseData));
-      
-      // Get fresh blockhash
-      const { blockhash: newBlockhash } = await connection.getLatestBlockhash('confirmed');
-      purchaseTx.message.recentBlockhash = newBlockhash;
-
-      // Set compute budget for purchase transaction
-      const purchaseMessage = TransactionMessage.decompile(purchaseTx.message);
-      purchaseMessage.instructions[0] = ComputeBudgetProgram.setComputeUnitLimit({
-        units: 1_400_000
-      });
-      purchaseMessage.instructions[1] = ComputeBudgetProgram.setComputeUnitPrice({
-        microLamports: 100_000
-      });
-      purchaseTx.message = purchaseMessage.compileToV0Message();
-
-      // Sign with manager wallet
-      purchaseTx.sign([MANAGER_PRIVATE_KEY]);
-
-      // Send purchase transaction
-      purchaseSignature = await connection.sendRawTransaction(purchaseTx.serialize(), {
-        skipPreflight: false,
-        maxRetries: 3,
-      });
-
-      console.log(`Token purchase transaction sent: ${purchaseSignature}`);
-
-      // Wait for purchase confirmation with longer timeout
-      await Promise.race([
-        connection.confirmTransaction({
-          signature: purchaseSignature,
-          blockhash: newBlockhash,
-          lastValidBlockHeight
-        }),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Purchase confirmation timeout')), 120000)
-        )
-      ]);
 
       setCreatedMintAddress(mintAddress);
 
       setResult(
-        `Token created and purchased successfully!\n` +
+        `Token created successfully!\n` +
         `Mint address: ${mintAddress}\n` +
-        `Creation TX: https://solscan.io/tx/${signature}\n` +
-        (purchaseSignature ? `Purchase TX: https://solscan.io/tx/${purchaseSignature}` : '')
+        `Payment: https://solscan.io/tx/${paymentSignature}\n` +
+        `Creation: https://solscan.io/tx/${createSignature}\n` +
+        `Purchase: https://solscan.io/tx/${purchaseResponseData.purchaseSignature}\n` +
+        `Backend purchase completed.`
       );
     } catch (error) {
       console.error('Transaction error:', error);

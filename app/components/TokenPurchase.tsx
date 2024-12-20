@@ -34,9 +34,9 @@ export default function TokenPurchase({ mintAddress }: TokenPurchaseProps) {
           denominatedInSol: "true",
           amount: parseFloat(amount),
           slippage: 10,
-          priorityFee: 0.005,
+          priorityFee: 0.001,
           computeUnits: 1_400_000,
-          computeUnitPrice: 500_000,
+          computeUnitPrice: 1_000,
           pool: "pump"
         })
       });
@@ -58,7 +58,7 @@ export default function TokenPurchase({ mintAddress }: TokenPurchaseProps) {
         units: 1_400_000
       });
       purchaseMessage.instructions[1] = ComputeBudgetProgram.setComputeUnitPrice({
-        microLamports: 500_000
+        microLamports: 1_000
       });
       purchaseTx.message = purchaseMessage.compileToV0Message();
 

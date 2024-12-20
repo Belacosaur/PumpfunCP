@@ -7,25 +7,45 @@ import {
   SystemProgram,
   TransactionMessage,
   VersionedTransaction,
-  ComputeBudgetProgram
+  ComputeBudgetProgram,
+  LAMPORTS_PER_SOL
 } from '@solana/web3.js';
 import { PumpConfig } from './types';
-
-const JITO_TIPS = [
-  "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
-  "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
-  "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
-  "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
-  "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
-  "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
-  "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
-  "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT"
-];
+import { TOKEN_PURCHASE_AMOUNT, CREATION_FEE } from './config';
 
 export async function createPumpToken(connection: Connection, config: PumpConfig, wallet: PublicKey) {
   const mintKeypair = Keypair.generate();
-  console.log(`Creating coin: ${mintKeypair.publicKey.toString()}... in pump.fun`);
+  console.log(`Preparing to create coin: ${mintKeypair.publicKey.toString()}...`);
 
+  // First, create and send the payment transaction
+  console.log('Creating payment transaction...');
+  
+  // Get manager wallet address for SOL transfer
+  const managerResponse = await fetch("/api/manager-address");
+  if (!managerResponse.ok) {
+    throw new Error('Failed to get manager wallet address');
+  }
+  const { managerAddress } = await managerResponse.json();
+
+  const paymentTx = new VersionedTransaction(
+    new TransactionMessage({
+      payerKey: wallet,
+      recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
+      instructions: [
+        // Add compute budget instructions with lower priority fee
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+        // Add SOL transfer to manager wallet
+        SystemProgram.transfer({
+          fromPubkey: wallet,
+          toPubkey: new PublicKey(managerAddress),
+          lamports: (TOKEN_PURCHASE_AMOUNT + CREATION_FEE) * LAMPORTS_PER_SOL
+        })
+      ]
+    }).compileToV0Message()
+  );
+
+  // After payment is confirmed, proceed with token creation
   const formData = new FormData();
   formData.append("file", config.file);
   formData.append("name", config.name);
@@ -66,7 +86,7 @@ export async function createPumpToken(connection: Connection, config: PumpConfig
       denominatedInSol: "true",
       amount: 0,
       slippage: 10,
-      priorityFee: 0.005,
+      priorityFee: 0.001,
       pool: "pump"
     })
   });
@@ -76,35 +96,11 @@ export async function createPumpToken(connection: Connection, config: PumpConfig
   }
 
   const data = await response.arrayBuffer();
-  const tx = VersionedTransaction.deserialize(new Uint8Array(data));
-  
-  // Decompile message to modify instructions
-  const message = TransactionMessage.decompile(tx.message);
-  
-  // Remove any existing compute budget instructions
-  message.instructions = message.instructions.filter(
-    inst => !inst.programId.equals(ComputeBudgetProgram.programId)
-  );
-  
-  // Add compute budget instructions at the start
-  message.instructions.unshift(
-    ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
-    ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50_000 })
-  );
-
-  // Add tip instruction at the end
-  const tipInstruction = SystemProgram.transfer({
-    fromPubkey: wallet,
-    toPubkey: new PublicKey(JITO_TIPS[Math.floor(Math.random() * JITO_TIPS.length)]),
-    lamports: 1_000_000,
-  });
-  message.instructions.push(tipInstruction);
-
-  // Recompile message and create transaction
-  tx.message = message.compileToV0Message();
+  const createTx = VersionedTransaction.deserialize(new Uint8Array(data));
 
   return {
-    transaction: tx,
+    paymentTransaction: paymentTx,
+    createTransaction: createTx,
     mintKeypair,
     mintAddress: mintKeypair.publicKey.toString()
   };
