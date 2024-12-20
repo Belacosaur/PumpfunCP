@@ -8,4 +8,6 @@ README.md
 .next
 .vscode
 *.log
-.DS_Store 
+.DS_Store
+backend/
+backend/**/*
