@@ -1,11 +1,17 @@
 [phases.setup]
 nixPkgs = ["nodejs_18", "npm-9_x"]
+aptPkgs = ["git"]
 
 [phases.install]
-cmds = ["npm ci --omit=dev"]
+cmds = ["npm ci --omit=dev --legacy-peer-deps"]
 
 [phases.build]
 cmds = ["npm run build"]
 
 [start]
-cmd = "npm run start" 
+cmd = "npm run start"
+
+[variables]
+NODE_ENV = "production"
+PORT = "3000"
+NPM_CONFIG_ENGINE_STRICT = "false" 
