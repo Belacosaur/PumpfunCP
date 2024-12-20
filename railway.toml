@@ -1,6 +1,7 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm ci --omit=dev && npm run build"
+installCommand = "npm ci --omit=dev"
+buildCommand = "npm run build"
 
 [deploy]
 startCommand = "npm run start"
@@ -9,4 +10,5 @@ healthcheckTimeout = 100
 
 [env]
 NODE_ENV = "production"
-PORT = "3000" 
+PORT = "3000"
+NPM_CONFIG_ENGINE_STRICT = "false"
