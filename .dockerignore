@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+.env.*
+node_modules
+npm-debug.log
+README.md
+.next
+.vscode
+*.log
+.DS_Store
+backend/
+backend/**/*
+dist/
+dist/**/*
+coverage/
+coverage/**/* 
