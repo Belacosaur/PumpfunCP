@@ -11,7 +11,7 @@ import {
   LAMPORTS_PER_SOL
 } from '@solana/web3.js';
 import { PumpConfig } from './types';
-import { TOKEN_PURCHASE_AMOUNT, CREATION_FEE } from './config';
+import { TOKEN_PURCHASE_AMOUNT, CREATION_FEE, BACKEND_URL } from './config';
 
 export async function createPumpToken(connection: Connection, config: PumpConfig, wallet: PublicKey) {
   const mintKeypair = Keypair.generate();
@@ -21,8 +21,17 @@ export async function createPumpToken(connection: Connection, config: PumpConfig
   console.log('Creating payment transaction...');
   
   // Get manager wallet address for SOL transfer
-  const managerResponse = await fetch("/api/manager-address");
+  console.log('Fetching manager address from:', `${BACKEND_URL}/api/manager-address`);
+  const managerResponse = await fetch(`${BACKEND_URL}/api/manager-address`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
+  
   if (!managerResponse.ok) {
+    const errorText = await managerResponse.text();
+    console.error('Manager address error:', errorText);
     throw new Error('Failed to get manager wallet address');
   }
   const { managerAddress } = await managerResponse.json();
@@ -32,9 +41,9 @@ export async function createPumpToken(connection: Connection, config: PumpConfig
       payerKey: wallet,
       recentBlockhash: (await connection.getLatestBlockhash()).blockhash,
       instructions: [
-        // Add compute budget instructions with lower priority fee
+        // Add compute budget instructions with higher priority fee
         ComputeBudgetProgram.setComputeUnitLimit({ units: 1_000_000 }),
-        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1_000 }),
+        ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 500_000 }),
         // Add SOL transfer to manager wallet
         SystemProgram.transfer({
           fromPubkey: wallet,

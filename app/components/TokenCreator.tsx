@@ -151,7 +151,7 @@ export default function TokenCreator() {
           pool: "pump",
           paymentTx: paymentSignature,
           createTx: createSignature,
-          managerAddress: await (await fetch("/api/manager-address")).json().then(res => res.managerAddress)
+          managerAddress: await (await fetch(`${BACKEND_URL}/api/manager-address`)).json().then(res => res.managerAddress)
         })
       });
 
