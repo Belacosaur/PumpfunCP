@@ -6,7 +6,6 @@ buildCommand = "npm run build"
 startCommand = "npm run start"
 healthcheckPath = "/"
 healthcheckTimeout = 100
-restartPolicyType = "on-failure"
 
 [env]
 NODE_ENV = "production"
