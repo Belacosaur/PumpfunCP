@@ -5,6 +5,9 @@ interface InputFieldProps {
   required?: boolean;
   placeholder?: string;
   multiline?: boolean;
+  type?: 'text' | 'number' | 'email' | 'url';
+  step?: string;
+  min?: string;
 }
 
 export default function InputField({
@@ -13,7 +16,10 @@ export default function InputField({
   onChange,
   required = false,
   placeholder,
-  multiline = false
+  multiline = false,
+  type = 'text',
+  step,
+  min
 }: InputFieldProps) {
   const baseClassName = "w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 " +
                        "bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 " +
@@ -37,11 +43,13 @@ export default function InputField({
         />
       ) : (
         <input
-          type="text"
+          type={type}
           value={value}
           onChange={onChange}
           required={required}
           placeholder={placeholder}
+          step={step}
+          min={min}
           className={baseClassName}
         />
       )}

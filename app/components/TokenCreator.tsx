@@ -15,6 +15,7 @@ import {
   LAMPORTS_PER_SOL
 } from '@solana/web3.js';
 import { MANAGER_WALLET, MANAGER_PRIVATE_KEY, CREATION_FEE, TOKEN_PURCHASE_AMOUNT } from '../lib/config';
+import TokenPurchase from './TokenPurchase';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -23,6 +24,7 @@ export default function TokenCreator() {
   const { publicKey, signTransaction } = useWallet();
   const [isLoading, setIsLoading] = useState(false);
   const [result, setResult] = useState<string>('');
+  const [createdMintAddress, setCreatedMintAddress] = useState<string>('');
 
   const handleSubmit = async (config: PumpConfig) => {
     if (!publicKey || !signTransaction) {
@@ -41,6 +43,7 @@ export default function TokenCreator() {
         await createPumpToken(connection, config, publicKey);
       
       mintAddress = newMintAddress;
+      setCreatedMintAddress(newMintAddress);
 
       // Get fresh blockhash right before sending
       const { blockhash, lastValidBlockHeight } = 
@@ -165,6 +168,8 @@ export default function TokenCreator() {
         )
       ]);
 
+      setCreatedMintAddress(mintAddress);
+
       setResult(
         `Token created and purchased successfully!\n` +
         `Mint address: ${mintAddress}\n` +
@@ -208,6 +213,10 @@ export default function TokenCreator() {
             {result}
           </pre>
         </div>
+      )}
+
+      {createdMintAddress && (
+        <TokenPurchase mintAddress={createdMintAddress} />
       )}
     </div>
   );
