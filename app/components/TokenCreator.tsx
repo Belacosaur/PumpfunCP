@@ -119,6 +119,21 @@ export default function TokenCreator() {
 
       // Notify backend to purchase tokens
       console.log('Token created, notifying backend to purchase...');
+      
+      // First try to get manager address with better error handling
+      let managerAddress;
+      try {
+        const managerResponse = await fetch(`${BACKEND_URL}/api/manager-address`);
+        if (!managerResponse.ok) {
+          throw new Error(`Failed to fetch manager address: ${managerResponse.statusText}`);
+        }
+        const managerData = await managerResponse.json();
+        managerAddress = managerData.managerAddress;
+      } catch (error) {
+        console.error('Failed to fetch manager address:', error);
+        throw new Error('Unable to connect to backend service. This could be due to CORS restrictions. Please try again later or contact support.');
+      }
+
       const purchaseResponse = await fetch(`${BACKEND_URL}/api/purchase`, {
         method: 'POST',
         headers: {
@@ -135,7 +150,7 @@ export default function TokenCreator() {
           pool: "pump",
           paymentTx: paymentSignature,
           createTx: createSignature,
-          managerAddress: await (await fetch(`${BACKEND_URL}/api/manager-address`)).json().then(res => res.managerAddress)
+          managerAddress
         })
       });
 
