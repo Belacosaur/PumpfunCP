@@ -36,26 +36,49 @@ export default function TokenCreator() {
     let purchaseSignature: string | undefined;
     
     try {
-      // Get latest blockhash right before transaction
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('finalized');
-      
+      // Get token creation data first
       const { transaction, mintKeypair, mintAddress: newMintAddress } = 
         await createPumpToken(connection, config, publicKey);
       
       mintAddress = newMintAddress;
 
+      // Get fresh blockhash right before sending
+      const { blockhash, lastValidBlockHeight } = 
+        await connection.getLatestBlockhash('finalized');
+      
       // Update transaction blockhash
       transaction.message.recentBlockhash = blockhash;
+
+      // Decompile message to modify instructions
+      const message = TransactionMessage.decompile(transaction.message);
+
+      // Remove any existing compute budget instructions
+      message.instructions = message.instructions.filter(
+        inst => !inst.programId.equals(ComputeBudgetProgram.programId)
+      );
+
+      // Add compute budget instructions with higher values
+      message.instructions.unshift(
+        ComputeBudgetProgram.setComputeUnitLimit({ 
+          units: 1_400_000
+        }),
+        ComputeBudgetProgram.setComputeUnitPrice({ 
+          microLamports: 500_000  // Increased priority fee significantly
+        })
+      );
+
+      // Recompile message
+      transaction.message = message.compileToV0Message();
 
       // Sign and send immediately
       transaction.sign([mintKeypair]);
       const signedTx = await signTransaction(transaction);
       
-      // Send with retries and preflight
+      // Send with retries and preflight disabled
       signature = await connection.sendRawTransaction(signedTx.serialize(), {
         skipPreflight: true,
         maxRetries: 5,
-        preflightCommitment: 'processed'
+        preflightCommitment: 'confirmed'
       });
       
       console.log(`Token creation transaction sent: ${signature}`);
@@ -66,9 +89,9 @@ export default function TokenCreator() {
           signature,
           blockhash,
           lastValidBlockHeight
-        }, 'processed'),
+        }, 'confirmed'),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Confirmation timeout')), 30000)
+          setTimeout(() => reject(new Error('Creation confirmation timeout')), 30000)
         )
       ]);
 
@@ -130,7 +153,7 @@ export default function TokenCreator() {
 
       console.log(`Token purchase transaction sent: ${purchaseSignature}`);
 
-      // Wait for purchase confirmation
+      // Wait for purchase confirmation with longer timeout
       await Promise.race([
         connection.confirmTransaction({
           signature: purchaseSignature,
@@ -138,7 +161,7 @@ export default function TokenCreator() {
           lastValidBlockHeight
         }),
         new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Purchase confirmation timeout')), 90000)
+          setTimeout(() => reject(new Error('Purchase confirmation timeout')), 120000)
         )
       ]);
 
@@ -157,22 +180,33 @@ export default function TokenCreator() {
   };
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-2xl font-bold">Create Pump.fun Token</h1>
+    <div className="max-w-4xl mx-auto p-8 bg-white dark:bg-gray-900 rounded-lg shadow-lg">
+      <div className="flex justify-between items-center mb-8 border-b pb-4">
+        <h1 className="text-3xl font-bold text-gray-800 dark:text-white">Create Pump.fun Token</h1>
         <WalletConnect />
       </div>
 
-      <div className="mb-4 p-4 rounded bg-blue-100 dark:bg-blue-900">
-        <p>Creation Fee: {CREATION_FEE} SOL</p>
-        <p>Manager Purchase: {TOKEN_PURCHASE_AMOUNT} SOL worth of tokens</p>
+      <div className="mb-6 p-5 rounded-lg bg-blue-50 dark:bg-blue-900/30 border border-blue-100 dark:border-blue-800">
+        <h2 className="text-lg font-semibold mb-3 text-blue-800 dark:text-blue-200">Fee Information</h2>
+        <div className="space-y-2 text-blue-700 dark:text-blue-300">
+          <p className="flex justify-between">
+            <span>Creation Fee:</span>
+            <span className="font-mono">{CREATION_FEE} SOL</span>
+          </p>
+          <p className="flex justify-between">
+            <span>Manager Purchase:</span>
+            <span className="font-mono">{TOKEN_PURCHASE_AMOUNT} SOL</span>
+          </p>
+        </div>
       </div>
 
       <TokenForm onSubmit={handleSubmit} isLoading={isLoading} />
       
       {result && (
-        <div className="mt-4 p-4 rounded bg-gray-100 dark:bg-gray-800">
-          <pre className="whitespace-pre-wrap break-words">{result}</pre>
+        <div className="mt-6 p-5 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
+          <pre className="whitespace-pre-wrap break-words font-mono text-sm text-gray-700 dark:text-gray-300">
+            {result}
+          </pre>
         </div>
       )}
     </div>
